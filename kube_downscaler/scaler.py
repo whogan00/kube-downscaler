@@ -55,6 +55,50 @@ def ignore_resource(resource: pykube.objects.NamespacedAPIObject) -> bool:
     # any value different from "false" will ignore the resource (to be on the safe side)
     return resource.annotations.get(EXCLUDE_ANNOTATION, 'false').lower() != 'false'
 
+def check_is_uptime(resource: pykube.objects.NamespacedAPIObject,
+                        original_value: str, downtime_value: str,
+                        default_uptime: str, default_downtime: str, 
+                        now: datetime.datetime,
+                        exclude: bool, forced_uptime: bool):
+
+    logger.debug('original_value:%s downtime_value:%s exclude:%s passed',
+                original_value, downtime_value, exclude)
+
+    if exclude and not original_value:
+        logger.debug('resource should be excluded')
+    else:
+        ignore = False
+    
+    upscale_period = resource.annotations.get(UPSCALE_PERIOD_ANNOTATION, upscale_period)
+    downscale_period = resource.annotations.get(DOWNSCALE_PERIOD_ANNOTATION, downscale_period)
+
+    if forced_uptime or (exclude and original_value):
+        uptime = "forced"
+        downtime = "ignored"
+        is_uptime = True
+    elif upscale_period != 'never' or downscale_period != 'never':
+        uptime = upscale_period
+        downtime = downscale_period
+        if helper.matches_time_spec(now, uptime) and helper.matches_time_spec(now, downtime):
+            logger.debug('Upscale and downscale periods overlap, do nothing')
+            ignore = True
+        elif helper.matches_time_spec(now, uptime):
+            is_uptime = True
+        elif helper.matches_time_spec(now, downtime):
+            is_uptime = False
+        else:
+            ignore = True
+        logger.debug('Periods checked: upscale=%s, downscale=%s, ignore=%s, is_uptime=%s', upscale_period, downscale_period, ignore, is_uptime)
+    else:
+        uptime = resource.annotations.get(UPTIME_ANNOTATION, default_uptime)
+        downtime = resource.annotations.get(DOWNTIME_ANNOTATION, default_downtime)
+        is_uptime = helper.matches_time_spec(now, uptime) and not helper.matches_time_spec(now, downtime)
+
+    return(ignore, is_uptime)
+
+
+
+
 
 def autoscale_resource(resource: pykube.objects.NamespacedAPIObject, upscale_period: str, downscale_period: str,
                        default_uptime: str, default_downtime: str, forced_uptime: bool, dry_run: bool,
@@ -64,36 +108,12 @@ def autoscale_resource(resource: pykube.objects.NamespacedAPIObject, upscale_per
         original_replicas = resource.annotations.get(ORIGINAL_REPLICAS_ANNOTATION)
         downtime_replicas = int(resource.annotations.get(DOWNTIME_REPLICAS_ANNOTATION, downtime_replicas))
 
-        if exclude and not original_replicas:
-            logger.debug('%s %s/%s was excluded', resource.kind, resource.namespace, resource.name)
+        ignore, is_uptime = check_is_uptime(resource, original_replicas, downtime_replicas,
+                                            default_uptime, default_downtime, now, exclude, forced_uptime)
+
+        if ignore:
+            logger.debug('%s ignored', resource.name)
         else:
-            replicas = resource.replicas
-            ignore = False
-
-            upscale_period = resource.annotations.get(UPSCALE_PERIOD_ANNOTATION, upscale_period)
-            downscale_period = resource.annotations.get(DOWNSCALE_PERIOD_ANNOTATION, downscale_period)
-            if forced_uptime or (exclude and original_replicas):
-                uptime = "forced"
-                downtime = "ignored"
-                is_uptime = True
-            elif upscale_period != 'never' or downscale_period != 'never':
-                uptime = upscale_period
-                downtime = downscale_period
-                if helper.matches_time_spec(now, uptime) and helper.matches_time_spec(now, downtime):
-                    logger.debug('Upscale and downscale periods overlap, do nothing')
-                    ignore = True
-                elif helper.matches_time_spec(now, uptime):
-                    is_uptime = True
-                elif helper.matches_time_spec(now, downtime):
-                    is_uptime = False
-                else:
-                    ignore = True
-                logger.debug('Periods checked: upscale=%s, downscale=%s, ignore=%s, is_uptime=%s', upscale_period, downscale_period, ignore, is_uptime)
-            else:
-                uptime = resource.annotations.get(UPTIME_ANNOTATION, default_uptime)
-                downtime = resource.annotations.get(DOWNTIME_ANNOTATION, default_downtime)
-                is_uptime = helper.matches_time_spec(now, uptime) and not helper.matches_time_spec(now, downtime)
-
             logger.debug('%s %s/%s has %s replicas (original: %s, uptime: %s)',
                          resource.kind, resource.namespace, resource.name, replicas, original_replicas, uptime)
             update_needed = False
@@ -156,7 +176,7 @@ def autoscale_resources(api, kind, namespace: str,
             logger.debug('Kind %s will call different function', kind)
             auto_suspend_cronjob(resource, upscale_period_for_namespace, downscale_period_for_namespace,
                                  default_uptime_for_namespace, default_downtime_for_namespace, namespace_settings['forced_uptime'],
-                                 dry_run, now, grace_period, default_downtime_replicas_for_namespace, namespace_excluded=excluded)
+                                 dry_run, now, grace_period, None, namespace_excluded=excluded)
         else:
             autoscale_resource(resource, upscale_period_for_namespace, downscale_period_for_namespace,
                                default_uptime_for_namespace, default_downtime_for_namespace, forced_uptime_for_namespace,

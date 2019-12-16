@@ -23,7 +23,7 @@ def get_parser():
     parser.add_argument('--interval', type=int, help='Loop interval (default: 30s)', default=30)
     parser.add_argument('--namespace', help='Namespace')
     parser.add_argument('--include-resources', type=check_include_resources, default="deployments",
-                        help='Downscale resources of this kind as comma separated list. [deployments, statefulsets, stacks] (default: deployments)')
+                        help='Downscale resources of this kind as comma separated list. [deployments, statefulsets, stacks, cronjobs] (default: deployments)')
     parser.add_argument('--grace-period', type=int,
                         help='Grace period in seconds for deployments before scaling down (default: 15min)',
                         default=900)
@@ -43,6 +43,9 @@ def get_parser():
     parser.add_argument('--exclude-statefulsets',
                         help='Exclude specific statefulsets from downscaling',
                         default=os.getenv('EXCLUDE_STATEFULSETS', ''))
+    parser.add_argument('--exclude-cronjobs',
+                        help='Exclude specific cronjobs from susmending',
+                        default=os.getenv('EXLCUDE_CRONJOBS', '')),
     parser.add_argument('--downtime-replicas', type=int,
                         help='Default amount of replicas when downscaling (default: 0)',
                         default=int(os.getenv('DOWNTIME_REPLICAS', 0)))

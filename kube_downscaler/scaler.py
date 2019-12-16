@@ -61,7 +61,7 @@ def autoscale_resource(resource: pykube.objects.NamespacedAPIObject, upscale_per
                        now: datetime.datetime, grace_period: int, downtime_replicas: int, namespace_excluded=False):
     try:
         exclude = namespace_excluded or ignore_resource(resource)
-        original_replicas = resource.annotations.get(ORIGINAL_CRON_SUSPEND_ANNOTATION)
+        original_replicas = resource.annotations.get(ORIGINAL_REPLICAS_ANNOTATION)
         downtime_replicas = int(resource.annotations.get(DOWNTIME_REPLICAS_ANNOTATION, downtime_replicas))
 
         if exclude and not original_replicas:
@@ -126,21 +126,26 @@ def autoscale_resource(resource: pykube.objects.NamespacedAPIObject, upscale_per
     except Exception as e:
         logger.exception('Failed to process %s %s/%s : %s', resource.kind, resource.namespace, resource.name, str(e))
 
-def setup_namespace_scale_values(api, kind, namespace: str, resource: pykube.objects.NamespacedAPIObject,
+def namespace_settings(api, namespace: str, resource: pykube.objects.NamespacedAPIObject,
                         exclude_namespaces: FrozenSet[str], exclude_names: FrozenSet[str],
                         upscale_period: str, downscale_period: str,
                         default_uptime: str, default_downtime: str, forced_uptime: bool, dry_run: bool,
                         now: datetime.datetime, grace_period: int, downtime_replicas: int):
     namespace_obj = pykube.Namespace.objects(api).get_by_name(resource.namespace)
 
-    excluded = namespace_obj.annotations.get(EXCLUDE_ANNOTATION, 'false').lower() != 'false'
+    # Setup dict to hold namespace settings to pass back.
+    namespace_settings = {}
 
-    default_uptime_for_namespace = namespace_obj.annotations.get(UPTIME_ANNOTATION, default_uptime)
-    default_downtime_for_namespace = namespace_obj.annotations.get(DOWNTIME_ANNOTATION, default_downtime)
-    default_downtime_replicas_for_namespace = int(namespace_obj.annotations.get(DOWNTIME_REPLICAS_ANNOTATION, downtime_replicas))
-    upscale_period_for_namespace = namespace_obj.annotations.get(UPSCALE_PERIOD_ANNOTATION, upscale_period)
-    downscale_period_for_namespace = namespace_obj.annotations.get(DOWNSCALE_PERIOD_ANNOTATION, downscale_period)
-    forced_uptime_for_namespace = namespace_obj.annotations.get(FORCE_UPTIME_ANNOTATION, forced_uptime)
+    namespace_settings['excluded'] = namespace_obj.annotations.get(EXCLUDE_ANNOTATION, 'false').lower() != 'false'
+
+    namespace_settings['uptime'] = namespace_obj.annotations.get(UPTIME_ANNOTATION, default_uptime)
+    namespace_settings['downtime'] = namespace_obj.annotations.get(DOWNTIME_ANNOTATION, default_downtime)
+    namespace_settings['downtime_replicas'] = int(namespace_obj.annotations.get(DOWNTIME_REPLICAS_ANNOTATION, downtime_replicas))
+    namespace_settings['upscale_period'] = namespace_obj.annotations.get(UPSCALE_PERIOD_ANNOTATION, upscale_period)
+    namespace_settings['downscale_period'] = namespace_obj.annotations.get(DOWNSCALE_PERIOD_ANNOTATION, downscale_period)
+    namespace_settings['forced_uptime'] = namespace_obj.annotations.get(FORCE_UPTIME_ANNOTATION, forced_uptime)
+
+    return namespace_settings
 
 def autoscale_resources(api, kind, namespace: str,
                         exclude_namespaces: FrozenSet[str], exclude_names: FrozenSet[str],
@@ -152,11 +157,11 @@ def autoscale_resources(api, kind, namespace: str,
             logger.debug('Resource %s was excluded (either resource itself or namespace %s are excluded)', resource.name, namespace)
             continue
 
-        # Override defaults with (optional) annotations from Namespace
         namespace_obj = pykube.Namespace.objects(api).get_by_name(resource.namespace)
 
         excluded = namespace_obj.annotations.get(EXCLUDE_ANNOTATION, 'false').lower() != 'false'
 
+        # Override defaults with (optional) annotations from Namespace
         default_uptime_for_namespace = namespace_obj.annotations.get(UPTIME_ANNOTATION, default_uptime)
         default_downtime_for_namespace = namespace_obj.annotations.get(DOWNTIME_ANNOTATION, default_downtime)
         default_downtime_replicas_for_namespace = int(namespace_obj.annotations.get(DOWNTIME_REPLICAS_ANNOTATION, downtime_replicas))
@@ -164,9 +169,19 @@ def autoscale_resources(api, kind, namespace: str,
         downscale_period_for_namespace = namespace_obj.annotations.get(DOWNSCALE_PERIOD_ANNOTATION, downscale_period)
         forced_uptime_for_namespace = namespace_obj.annotations.get(FORCE_UPTIME_ANNOTATION, forced_uptime)
 
-        autoscale_resource(resource, upscale_period_for_namespace, downscale_period_for_namespace,
-                           default_uptime_for_namespace, default_downtime_for_namespace, forced_uptime_for_namespace,
-                           dry_run, now, grace_period, default_downtime_replicas_for_namespace, namespace_excluded=excluded)
+       # Call function to setup defaults for namespaces
+        namespace_settings = namespace_settings(api, namespace, resource,
+            upscale_period, downscale_period, default_uptime, default_downtime, forced_uptime, downtime_replicas)
+
+        if kind == 'CronJob':
+            logger.debug('Kind %s will call different function', kind)
+            auto_suspend_cronjob(resource, upscale_period_for_namespace, downscale_period_for_namespace,
+                                 default_uptime_for_namespace, default_downtime_for_namespace, namespace_settings['forced_uptime'],
+                                 dry_run, now, grace_period, default_downtime_replicas_for_namespace, namespace_excluded=excluded)
+        else:
+            autoscale_resource(resource, upscale_period_for_namespace, downscale_period_for_namespace,
+                               default_uptime_for_namespace, default_downtime_for_namespace, forced_uptime_for_namespace,
+                               dry_run, now, grace_period, default_downtime_replicas_for_namespace, namespace_excluded=excluded)
 
 def auto_suspend_cronjob(resource: pykube.objects.NamespacedAPIObject, upscale_period: str, downscale_period: str,
                        default_uptime: str, default_downtime: str, forced_uptime: bool, dry_run: bool,

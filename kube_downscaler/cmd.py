@@ -2,7 +2,7 @@ import os
 
 import argparse
 
-VALID_RESOURCES = frozenset(["deployments", "statefulsets", "stacks"])
+VALID_RESOURCES = frozenset(["deployments", "statefulsets", "stacks", "cronjobs"])
 
 
 def check_include_resources(value):

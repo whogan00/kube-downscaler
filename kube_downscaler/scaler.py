@@ -176,6 +176,8 @@ def auto_suspend_cronjob(resource: pykube.objects.NamespacedAPIObject, upscale_p
         original_status = resource.annotations.get(ORIGINAL_CRON_SUSPEND_ANNOTATION)
         downtime_status = resource.annotations.get(DOWNTIME_CRON_SUSPEND_ANNOTATION, DOWNTIME_CRON_SUSPEND)
 
+        logger.info('original_status: %s downtime_status: %s', original_status, downtime_status )
+
         if exclude and not original_status:
             logger.debug('%s %s/%s was excluded', resource.kind, resource.namespace, resource.name)
         else:
@@ -210,14 +212,14 @@ def auto_suspend_cronjob(resource: pykube.objects.NamespacedAPIObject, upscale_p
                          resource.kind, resource.namespace, resource.name, status, original_status, uptime)
             update_needed = False
 
-            if not ignore and is_uptime and status == downtime_status and original_status == 'false':
+            if not ignore and is_uptime and status == downtime_status and original_status and original_status == False:
                 logger.info('Setting suspend status %s %s/%s from %s to %s (uptime: %s, downtime: %s)',
                             resource.kind, resource.namespace, resource.name, status, original_status,
                             uptime, downtime)
                 resource.obj["spec"]["suspend"] = original_status
                 resource.annotations[ORIGINAL_CRON_SUSPEND_ANNOTATION] = None
                 update_needed = True
-            elif not ignore and not is_uptime and status == 'false' and status != downtime_status:
+            elif not ignore and not is_uptime and status == False and status != downtime_status:
                 target_status = resource.annotations.get(DOWNTIME_CRON_SUSPEND_ANNOTATION, DOWNTIME_CRON_SUSPEND)
                 if within_grace_period(resource, grace_period, now):
                     logger.info('%s %s/%s within grace period (%ds), not scaling down (yet)',
@@ -233,6 +235,7 @@ def auto_suspend_cronjob(resource: pykube.objects.NamespacedAPIObject, upscale_p
                 if dry_run:
                     logger.info('**DRY-RUN**: would update %s %s/%s', resource.kind, resource.namespace, resource.name)
                 else:
+                    logger.info('Updating cronjob suspend status %s %s/%s', resource.kind, resource.namespace, resource.name)
                     resource.update()
     except Exception as e:
         logger.exception('Failed to process %s %s/%s : %s', resource.kind, resource.namespace, resource.name, str(e))
